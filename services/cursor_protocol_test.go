@@ -3,6 +3,7 @@ package services
 import (
 	"cursor2api-go/config"
 	"cursor2api-go/models"
+	"encoding/json"
 	"strings"
 	"testing"
 )
@@ -250,5 +251,91 @@ func TestBuildCursorRequestCountsSerializedToolCallsInMaxInputLength(t *testing.
 	}
 	if totalLength == 0 {
 		t.Fatalf("truncation should preserve at least one message")
+	}
+}
+
+func TestParseToolChoiceObjectForm(t *testing.T) {
+	tests := []struct {
+		name     string
+		raw      json.RawMessage
+		wantMode string
+		wantErr  bool
+	}{
+		{
+			name:     "object auto",
+			raw:      []byte(`{"type":"auto"}`),
+			wantMode: "auto",
+		},
+		{
+			name:     "object none",
+			raw:      []byte(`{"type":"none"}`),
+			wantMode: "none",
+		},
+		{
+			name:     "object required",
+			raw:      []byte(`{"type":"required"}`),
+			wantMode: "required",
+		},
+		{
+			name:     "string auto",
+			raw:      []byte(`"auto"`),
+			wantMode: "auto",
+		},
+		{
+			name:     "object function",
+			raw:      []byte(`{"type":"function","function":{"name":"get_weather"}}`),
+			wantMode: "function",
+		},
+		{
+			name:    "object unsupported type",
+			raw:     []byte(`{"type":"unknown"}`),
+			wantErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := parseToolChoice(tt.raw)
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("parseToolChoice() error = %v, wantErr %v", err, tt.wantErr)
+			}
+			if !tt.wantErr && got.Mode != tt.wantMode {
+				t.Fatalf("parseToolChoice() mode = %q, want %q", got.Mode, tt.wantMode)
+			}
+		})
+	}
+}
+
+func TestBuildCursorRequestToolChoiceObjectAutoWithTools(t *testing.T) {
+	service := &CursorService{
+		config: &config.Config{
+			MaxInputLength: 10000,
+		},
+	}
+
+	request := &models.ChatCompletionRequest{
+		Model:      "claude-sonnet-4.6",
+		ToolChoice: []byte(`{"type":"auto"}`),
+		Messages: []models.Message{
+			{Role: "user", Content: "What's the weather?"},
+		},
+		Tools: []models.Tool{
+			{
+				Type: "function",
+				Function: models.FunctionDefinition{
+					Name:        "get_weather",
+					Description: "Fetch current weather",
+					Parameters:  map[string]interface{}{"type": "object"},
+				},
+			},
+		},
+	}
+
+	result, err := service.buildCursorRequest(request)
+	if err != nil {
+		t.Fatalf("buildCursorRequest() error = %v", err)
+	}
+	if result.ParseConfig.TriggerSignal == "" {
+		t.Fatalf("TriggerSignal should not be empty when tools are provided with auto")
 	}
 }
