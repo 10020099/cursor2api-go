@@ -99,7 +99,12 @@ func parseToolChoice(raw json.RawMessage) (toolChoiceSpec, error) {
 		return toolChoiceSpec{}, fmt.Errorf("tool_choice must be a string or function object")
 	}
 
-	if choiceObject.Type != "function" {
+	switch choiceObject.Type {
+	case "auto", "none", "required":
+		return toolChoiceSpec{Mode: choiceObject.Type}, nil
+	case "function":
+		// handled below
+	default:
 		return toolChoiceSpec{}, fmt.Errorf("unsupported tool_choice type %q", choiceObject.Type)
 	}
 	if choiceObject.Function == nil || strings.TrimSpace(choiceObject.Function.Name) == "" {
