@@ -29,15 +29,17 @@ func (s *CursorService) buildCursorRequest(request *models.ChatCompletionRequest
 		return cursorBuildResult{}, middleware.NewRequestValidationError(err.Error(), "invalid_tool_choice")
 	}
 
-	if len(request.Tools) == 0 && toolChoice.Mode != "auto" && toolChoice.Mode != "none" {
+	// Filter tools to only include valid function-type tools with non-empty
+	// names.  This makes the proxy resilient to clients that include
+	// non-function tool types (e.g. "code_interpreter", "file_search") or
+	// entries with missing function names.
+	tools := filterValidTools(request.Tools)
+
+	if len(tools) == 0 && toolChoice.Mode != "auto" && toolChoice.Mode != "none" {
 		return cursorBuildResult{}, middleware.NewRequestValidationError("tool_choice requires tools to be provided", "missing_tools")
 	}
 
-	if err := validateTools(request.Tools); err != nil {
-		return cursorBuildResult{}, middleware.NewRequestValidationError(err.Error(), "invalid_tools")
-	}
-
-	if toolChoice.FunctionName != "" && !toolExists(request.Tools, toolChoice.FunctionName) {
+	if toolChoice.FunctionName != "" && !toolExists(tools, toolChoice.FunctionName) {
 		return cursorBuildResult{}, middleware.NewRequestValidationError(
 			fmt.Sprintf("tool_choice references unknown function %q", toolChoice.FunctionName),
 			"unknown_tool_choice_function",
@@ -45,7 +47,7 @@ func (s *CursorService) buildCursorRequest(request *models.ChatCompletionRequest
 	}
 
 	hasToolHistory := messagesContainToolHistory(request.Messages)
-	toolProtocolEnabled := len(request.Tools) > 0 && toolChoice.Mode != "none"
+	toolProtocolEnabled := len(tools) > 0 && toolChoice.Mode != "none"
 	triggerSignal := ""
 	if toolProtocolEnabled || hasToolHistory {
 		triggerSignal = "<<CALL_" + utils.GenerateRandomString(8) + ">>"
@@ -54,7 +56,7 @@ func (s *CursorService) buildCursorRequest(request *models.ChatCompletionRequest
 	cursorMessages := buildCursorMessages(
 		request.Messages,
 		s.config.SystemPromptInject,
-		request.Tools,
+		tools,
 		toolChoice,
 		capability,
 		hasToolHistory,
@@ -117,7 +119,10 @@ func parseToolChoice(raw json.RawMessage) (toolChoiceSpec, error) {
 	}, nil
 }
 
-func validateTools(tools []models.Tool) error {
+// filterValidTools returns only valid function-type tools that have non-empty
+// names.  Duplicate function names are silently deduplicated (first wins).
+func filterValidTools(tools []models.Tool) []models.Tool {
+	valid := make([]models.Tool, 0, len(tools))
 	seen := make(map[string]struct{}, len(tools))
 	for _, tool := range tools {
 		toolType := tool.Type
@@ -125,19 +130,20 @@ func validateTools(tools []models.Tool) error {
 			toolType = "function"
 		}
 		if toolType != "function" {
-			return fmt.Errorf("unsupported tool type %q", tool.Type)
+			continue
 		}
 
 		name := strings.TrimSpace(tool.Function.Name)
 		if name == "" {
-			return fmt.Errorf("tool function name is required")
+			continue
 		}
 		if _, exists := seen[name]; exists {
-			return fmt.Errorf("duplicate tool function name %q", name)
+			continue
 		}
 		seen[name] = struct{}{}
+		valid = append(valid, tool)
 	}
-	return nil
+	return valid
 }
 
 func toolExists(tools []models.Tool, name string) bool {

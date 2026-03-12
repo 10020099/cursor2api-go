@@ -339,3 +339,73 @@ func TestBuildCursorRequestToolChoiceObjectAutoWithTools(t *testing.T) {
 		t.Fatalf("TriggerSignal should not be empty when tools are provided with auto")
 	}
 }
+
+func TestFilterValidToolsSkipsNonFunctionAndEmptyName(t *testing.T) {
+	tools := []models.Tool{
+		{Type: "function", Function: models.FunctionDefinition{Name: "get_weather"}},
+		{Type: "code_interpreter"},
+		{Type: "function", Function: models.FunctionDefinition{Name: ""}},
+		{Type: "file_search"},
+		{Type: "function", Function: models.FunctionDefinition{Name: "search"}},
+	}
+
+	filtered := filterValidTools(tools)
+	if len(filtered) != 2 {
+		t.Fatalf("filterValidTools() returned %d tools, want 2", len(filtered))
+	}
+	if filtered[0].Function.Name != "get_weather" {
+		t.Fatalf("filtered[0] = %q, want get_weather", filtered[0].Function.Name)
+	}
+	if filtered[1].Function.Name != "search" {
+		t.Fatalf("filtered[1] = %q, want search", filtered[1].Function.Name)
+	}
+}
+
+func TestFilterValidToolsDeduplicates(t *testing.T) {
+	tools := []models.Tool{
+		{Type: "function", Function: models.FunctionDefinition{Name: "get_weather", Description: "first"}},
+		{Type: "function", Function: models.FunctionDefinition{Name: "get_weather", Description: "dup"}},
+	}
+	filtered := filterValidTools(tools)
+	if len(filtered) != 1 {
+		t.Fatalf("filterValidTools() returned %d tools, want 1", len(filtered))
+	}
+	if filtered[0].Function.Description != "first" {
+		t.Fatalf("first-wins dedup failed: got %q", filtered[0].Function.Description)
+	}
+}
+
+func TestFilterValidToolsEmptyTypeDefaultsToFunction(t *testing.T) {
+	tools := []models.Tool{
+		{Function: models.FunctionDefinition{Name: "lookup"}},
+	}
+	filtered := filterValidTools(tools)
+	if len(filtered) != 1 || filtered[0].Function.Name != "lookup" {
+		t.Fatalf("empty type tool should be kept, got %v", filtered)
+	}
+}
+
+func TestBuildCursorRequestSkipsInvalidToolsWithoutError(t *testing.T) {
+	service := &CursorService{
+		config: &config.Config{MaxInputLength: 10000},
+	}
+	request := &models.ChatCompletionRequest{
+		Model: "claude-sonnet-4.6",
+		Messages: []models.Message{
+			{Role: "user", Content: "Hello"},
+		},
+		Tools: []models.Tool{
+			{Type: "function", Function: models.FunctionDefinition{Name: "get_weather"}},
+			{Type: "code_interpreter"},
+			{Type: "function", Function: models.FunctionDefinition{Name: ""}},
+		},
+	}
+	result, err := service.buildCursorRequest(request)
+	if err != nil {
+		t.Fatalf("buildCursorRequest() should not error for mixed tools, got: %v", err)
+	}
+	systemText := result.Payload.Messages[0].Parts[0].Text
+	if !strings.Contains(systemText, "get_weather") {
+		t.Fatalf("system prompt should contain get_weather, got: %s", systemText)
+	}
+}
