@@ -178,6 +178,7 @@ type ErrorResponse struct {
 type ErrorDetail struct {
 	Message string `json:"message"`
 	Type    string `json:"type"`
+	Param   string `json:"param"`
 	Code    string `json:"code,omitempty"`
 }
 
