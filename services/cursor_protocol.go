@@ -30,7 +30,7 @@ func (s *CursorService) buildCursorRequest(request *models.ChatCompletionRequest
 	}
 
 	// Filter tools to only include valid function-type tools with non-empty
-	// names.  This makes the proxy resilient to clients that include
+	// names. This makes the proxy resilient to clients that include
 	// non-function tool types (e.g. "code_interpreter", "file_search") or
 	// entries with missing function names.
 	tools := filterValidTools(request.Tools)
@@ -120,7 +120,7 @@ func parseToolChoice(raw json.RawMessage) (toolChoiceSpec, error) {
 }
 
 // filterValidTools returns only valid function-type tools that have non-empty
-// names.  Duplicate function names are silently deduplicated (first wins).
+// names. Duplicate function names are silently deduplicated (first wins).
 func filterValidTools(tools []models.Tool) []models.Tool {
 	valid := make([]models.Tool, 0, len(tools))
 	seen := make(map[string]struct{}, len(tools))
