@@ -2,8 +2,7 @@ name: Docker
 
 on:
   push:
-    tags:
-      - 'v*'
+    branches: [main]
   workflow_dispatch:
 
 env:
@@ -14,12 +13,43 @@ jobs:
   build-and-push:
     runs-on: ubuntu-latest
     permissions:
-      contents: read
+      contents: write
       packages: write
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Calculate next version
+        id: version
+        run: |
+          # Fetch all tags
+          git fetch --tags
+          # Find the latest v* tag sorted by version number
+          LATEST_TAG=$(git tag -l 'v*' | sort -t. -k1,1V -k2,2n | tail -n1)
+          if [ -z "$LATEST_TAG" ]; then
+            NEXT_VERSION="v0.1"
+          else
+            # Extract the version number and increment by 0.1
+            CURRENT=$(echo "$LATEST_TAG" | sed 's/^v//')
+            NEXT=$(awk "BEGIN {printf \"%.1f\", $CURRENT + 0.1}")
+            NEXT_VERSION="v${NEXT}"
+          fi
+          echo "tag=${NEXT_VERSION}" >> "$GITHUB_OUTPUT"
+          echo "Next version: ${NEXT_VERSION}"
+
+      - name: Create and push tag
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          if git rev-parse "${{ steps.version.outputs.tag }}" >/dev/null 2>&1; then
+            echo "Tag ${{ steps.version.outputs.tag }} already exists, skipping tag creation"
+          else
+            git tag "${{ steps.version.outputs.tag }}"
+            git push origin "${{ steps.version.outputs.tag }}"
+          fi
 
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
@@ -34,25 +64,14 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Extract metadata
-        id: meta
-        uses: docker/metadata-action@v5
-        with:
-          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
-          tags: |
-            type=semver,pattern={{version}}
-            type=semver,pattern={{major}}.{{minor}}
-            type=semver,pattern={{major}}
-            type=raw,value=latest,enable=${{ startsWith(github.ref, 'refs/tags/v') }}
-            type=sha
-
       - name: Build and push
         uses: docker/build-push-action@v5
         with:
           context: .
           platforms: linux/amd64,linux/arm64
           push: true
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
+          tags: |
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.version.outputs.tag }}
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
           cache-from: type=gha
           cache-to: type=gha,mode=max
